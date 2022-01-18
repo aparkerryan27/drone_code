@@ -75,7 +75,7 @@ int main (int argc, char *argv[])
       update_filter();  
 
       //Pretty Print Relevant Info for Milestone 1
-      printf("IMU Values (x_gyro, y_gyro, z_gyro, roll, pitch): %10.5f %10.5f %10.5f %10.5f %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], roll_angle, pitch_angle);
+      printf("IMU Values: x_gyro= %10.5f, y_gyro = %10.5f, z_gyro = %10.5f, roll = %10.5f, pitch =  %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], roll_angle, pitch_angle);
 
     }
       
@@ -110,7 +110,7 @@ void calibrate_imu()
   roll_calibration = roll_temp;
   pitch_calibration = pitch_temp;
   //Pretty Print Milestone 1 Calibration Values
-  printf("Calibration Values (x_gyro, y_gyro, z_gyro, roll, pitch),  %10.5f %10.5f %10.5f %10.5f %10.5f\n\r",x_gyro_calibration,y_gyro_calibration,z_gyro_calibration,roll_calibration,pitch_calibration);
+  printf("Calibration Values (x_gyro, y_gyro, z_gyro, roll, pitch),  (%10.5f, %10.5f, %10.5f, %10.5f, %10.5f)\n\r",x_gyro_calibration,y_gyro_calibration,z_gyro_calibration,roll_calibration,pitch_calibration);
 
 }
 
