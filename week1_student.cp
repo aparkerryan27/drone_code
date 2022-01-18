@@ -75,10 +75,8 @@ int main (int argc, char *argv[])
       update_filter();  
 
       //Pretty Print Relevant Info for Milestone 1
-      printf("IMU Values (x_gyro, y_gyro, z_gyro, roll, pitch): %10.5f %10.5f %10.5f %10.5f %10.5f\n\r",imu_data[3],imu_data[4],imu_data[5], roll_angle, pitch_angle);
- 
+      printf("IMU Values (x_gyro, y_gyro, z_gyro, roll, pitch): %10.5f %10.5f %10.5f %10.5f %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], roll_angle, pitch_angle);
 
-     
     }
       
     
@@ -93,7 +91,6 @@ void calibrate_imu()
   float z_gyro_temp = 0;
   float roll_temp = 0;
   float pitch_temp = 0;
-  float accel_z_temp = 0;
 
   float cal_amount = 1000;
   for (int i = 0; i < cal_amount; i++) {
@@ -175,7 +172,7 @@ void read_imu()
     vw=vw ^ 0xffff;
     vw=-vw-1;
   }          
-  imu_data[0]= ((float)vw / 32768 * 250) - x_gyro_calibration; // Convert from Raw to deg/sec 
+  imu_data[0]= -1 *((float)vw / 32768 * 250) - x_gyro_calibration; // Convert from Raw to deg/sec 
   
   address= 69; //Gyro Y Value Address
   vh=wiringPiI2CReadReg8(imu,address);
@@ -203,8 +200,8 @@ void read_imu()
 
 
   //Finding Pitch and Roll
-  roll_angle =  atan2( imu_data[3],  -1 * imu_data[5]) / 0.017453 - roll_calibration;
-  pitch_angle = atan2( imu_data[4], -1 * imu_data[5]) / 0.017453 - pitch_calibration;
+  roll_angle =  atan2( imu_data[4],  -1 * imu_data[5]) / 0.017453 - roll_calibration;
+  pitch_angle = atan2( imu_data[3], -1 * imu_data[5]) / 0.017453 - pitch_calibration;
 
   
 
