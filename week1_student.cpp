@@ -60,6 +60,10 @@ float yaw=0;
 float pitch_angle=0;
 float roll_angle=0;
 
+// new globals for gyro
+float pitch_angle_gyro = 0;
+float roll_angle_gyro = 0;
+
 
 int main (int argc, char *argv[])
 {
@@ -76,7 +80,7 @@ int main (int argc, char *argv[])
         update_filter();
         
         //Pretty Print Relevant Info for Milestone 1
-        printf("IMU Values: x_gyro= %10.5f, y_gyro = %10.5f, z_gyro = %10.5f, pitch =  %10.5f, roll = %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], pitch_angle, roll_angle);
+        //printf("IMU Values: x_gyro= %10.5f, y_gyro = %10.5f, z_gyro = %10.5f, pitch =  %10.5f, roll = %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], pitch_angle, roll_angle);
         
     }
     
@@ -110,7 +114,7 @@ void calibrate_imu()
     roll_calibration = roll_temp;
     pitch_calibration = pitch_temp;
     //Pretty Print Milestone 1 Calibration Values
-    printf("Calibration Values (x_gyro, y_gyro, z_gyro, pitch, roll),  (%10.5f, %10.5f, %10.5f, %10.5f, %10.5f)\n\r",x_gyro_calibration,y_gyro_calibration,z_gyro_calibration,pitch_calibration,roll_calibration);
+    //printf("Calibration Values (x_gyro, y_gyro, z_gyro, pitch, roll),  (%10.5f, %10.5f, %10.5f, %10.5f, %10.5f)\n\r",x_gyro_calibration,y_gyro_calibration,z_gyro_calibration,pitch_calibration,roll_calibration);
     
 }
 
@@ -200,9 +204,9 @@ void read_imu()
     //printf("z: vh  %d vl %d vw %d deg/sec %f \n\r", vh, vl, vw, imu_data[2]);
     
     
-    //Finding Pitch and Roll
-    pitch_angle = (-atan2( imu_data[4], -imu_data[5]) / 0.017453) - pitch_calibration; // angle of rotation x
-    roll_angle =  (atan2( imu_data[3], -imu_data[5]) / 0.017453) - roll_calibration; // angle of rot y
+    //  //Finding Pitch and Roll from Accel Data
+    //  pitch_angle = (-atan2( imu_data[4], -imu_data[5]) / 0.017453) - pitch_calibration; // angle of rotation x
+    //  roll_angle =  (atan2( imu_data[3], -imu_data[5]) / 0.017453) - roll_calibration; // angle of rot y
     
     
 }
@@ -222,12 +226,39 @@ void update_filter()
         imu_diff+=1000000000;
     }
     //convert to seconds
-    imu_diff=imu_diff/1000000000;
+    imu_diff=imu_diff/1000000000; // delta t
     time_prev=time_curr;
     
-    //roll_delta = imu_diff *
+    // roll (y-axis), pitch (x-axis)
+    float A = 0.02;
+    float pitch_angle_accel, roll_angle_accel;
+    
+    // roll and pitch from accel data
+    pitch_angle_accel = (-atan2( imu_data[4], -imu_data[5]) / 0.017453) - pitch_calibration; // angle of rotation x
+    roll_angle_accel =  (atan2( imu_data[3], -imu_data[5]) / 0.017453) - roll_calibration; // angle of rot y
+    
+    // roll and pitch from integrated gyro
+    float roll_gyro_delta, pitch_gyro_delta;
+    roll_gyro_delta = imu_data[1] * imu_diff;
+    pitch_gyro_delta = imu_data[0] * imu_diff;
+    
+    roll_angle_gyro = roll_gyro_delta + roll_angle_gyro;  // integrated gyro
+    pitch_angle_gyro = pitch_gyro_delta + pitch_angle_gyro;
+    
     //comp. filter for roll, pitch here:
-    //Rollt+1=roll_accel*A+(1-A)*(roll_gyro_delta+ Rollt), Where A << 1 (try .02)
+    //Rollt+1=roll_accel*A+(1-A)*(roll_gyro_delta+ Rollt), //Where A << 1 (try .02)
+    roll_angle = roll_angle_accel * A + (1-A) * (roll_gyro_delta + roll_angle);
+    pitch_angle = pitch_angle_accel * A + (1-A) * (pitch_gyro_delta + pitch_angle);
+    
+    // Print results for milestone 2
+    //printf("%10.5f %10.5f %10.5f\n\r", roll_angle, roll_angle_accel, roll_angle_gyro);
+    printf("%10.5f %10.5f %10.5f\n\r", pitch_angle, pitch_angle_accel, pitch_angle_gyro);
+    
+    
+    
+    // ASK:
+    // 1. Integrated gyro output
+    
 }
 
 
