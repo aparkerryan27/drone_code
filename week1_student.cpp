@@ -24,6 +24,12 @@
 #define PWR_MGMT_1       0x6B // Device defaults to the SLEEP mode
 #define PWR_MGMT_2       0x6C
 
+// safety constants
+#define MAX_GYRO_RATE 300
+#define MAX_ROLL_ANGLE 45
+#define MIN_ROLL_ANGLE -45
+#define MAX_PITCH_ANGLE 45
+#define MIN_PITCH_ANGLE -45
 
 enum Ascale {
     AFS_2G = 0,
@@ -256,8 +262,7 @@ void update_filter()
     
     
     
-    // ASK:
-    // 1. Integrated gyro output
+
     
 }
 
