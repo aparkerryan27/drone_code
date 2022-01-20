@@ -86,7 +86,7 @@ int main (int argc, char *argv[])
         update_filter();
         
         //Pretty Print Relevant Info for Milestone 1
-        //printf("IMU Values: x_gyro= %10.5f, y_gyro = %10.5f, z_gyro = %10.5f, pitch =  %10.5f, roll = %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], pitch_angle, roll_angle);
+        printf("IMU Values: x_gyro= %10.5f, y_gyro = %10.5f, z_gyro = %10.5f, pitch =  %10.5f, roll = %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], pitch_angle, roll_angle);
         
     }
     
@@ -183,7 +183,8 @@ void read_imu()
         vw=vw ^ 0xffff;
         vw=-vw-1;
     }
-    imu_data[0]= ((float)vw / 32768 * 250) - x_gyro_calibration; // Convert from Raw to deg/sec
+    imu_data[0]= ((float)vw / 32768 * 500) - x_gyro_calibration; // Convert from Raw to deg/sec
+    //printf("x gyro deg/s: %10.5f \n", imu_data[0]);
     
     address= 69; //Gyro Y Value Address
     vh=wiringPiI2CReadReg8(imu,address);
@@ -194,7 +195,7 @@ void read_imu()
         vw=vw ^ 0xffff;
         vw=-vw-1;
     }
-    imu_data[1]= ((float)vw / 32768 * 250) - y_gyro_calibration; // Convert from Raw to deg/sec
+    imu_data[1]= ((float)vw / 32768 * 500) - y_gyro_calibration; // Convert from Raw to deg/sec
     
     address= 71; //Gyro Z Value Address
     vh=wiringPiI2CReadReg8(imu,address);
@@ -206,7 +207,7 @@ void read_imu()
         vw=-vw-1;
     }
     //TODO: Z gyro is not making any changes with the calibration when calibration is spot on
-    imu_data[2]= ((float)vw / 32768 * 250) - z_gyro_calibration; // Convert from Raw to deg/sec
+    imu_data[2]= ((float)vw / 32768 * 500) - z_gyro_calibration; // Convert from Raw to deg/sec
     //printf("z: vh  %d vl %d vw %d deg/sec %f \n\r", vh, vl, vw, imu_data[2]);
     
     
@@ -258,7 +259,7 @@ void update_filter()
     
     // Print results for milestone 2
     //printf("%10.5f %10.5f %10.5f\n\r", roll_angle, roll_angle_accel, roll_angle_gyro);
-    printf("%10.5f %10.5f %10.5f\n\r", pitch_angle, pitch_angle_accel, pitch_angle_gyro);
+    //printf("%10.5f %10.5f %10.5f\n\r", pitch_angle, pitch_angle_accel, pitch_angle_gyro);
     
     
     
