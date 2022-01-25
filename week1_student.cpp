@@ -7,12 +7,12 @@
 #include <stdint.h>
 #include <signal.h>
 #include <sys/shm.h>
-#include <sys/stat.h>
+#include <sys/stat.h> 
 #include <curses.h>
 #include <unistd.h>
 
-//gcc -o week1 week_1.cpp -lwiringPi -lncurses -lm
-// gcc -o week1 week1_student.cpp -lwiringPi -lm
+//gcc -o week1 week1_student.cpp -lwiringPi -lncurses -lm
+//gcc -o week1 week1_student.cpp -lwiringPi -lm
 
 #define frequency 25000000.0
 #define CONFIG           0x1A
@@ -27,9 +27,7 @@
 // safety constants
 #define MAX_GYRO_RATE 300
 #define MAX_ROLL_ANGLE 45
-#define MIN_ROLL_ANGLE -45
 #define MAX_PITCH_ANGLE 45
-#define MIN_PITCH_ANGLE -45
 
 enum Ascale {
     AFS_2G = 0,
@@ -70,39 +68,21 @@ float roll_angle=0;
 float pitch_angle_gyro = 0;
 float roll_angle_gyro = 0;
 
-
-int main (int argc, char *argv[])
-{
-    
-    setup_imu();
-    calibrate_imu();
-    
-    printf("did that!");
-    
-    while(1)
-    {
-        //sleep(1);
-        read_imu();
-        update_filter();
-        
-        //Pretty Print Relevant Info for Milestone 1
-        printf("IMU Values: x_gyro= %10.5f, y_gyro = %10.5f, z_gyro = %10.5f, pitch =  %10.5f, roll = %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], pitch_angle, roll_angle);
-        
-    }
-    
-    
-    
-    
-}
+//Keyboard Setup
+struct Keyboard {
+  char key_press;
+  int heartbeat;
+  int version;
+};
+Keyboard* shared_memory; 
+int run_program=1;
+long prev_heartbeat_time = 0;
+int prev_heartbeat;
 
 void calibrate_imu()
 {
-    float x_gyro_temp = 0;
-    float y_gyro_temp = 0;
-    float z_gyro_temp = 0;
-    float roll_temp = 0;
-    float pitch_temp = 0;
-    
+    float x_gyro_temp, y_gyro_temp, z_gyro_temp, roll_temp, pitch_temp = 0;
+
     float cal_amount = 1000;
     for (int i = 0; i < cal_amount; i++) {
         read_imu();
@@ -119,9 +99,9 @@ void calibrate_imu()
     z_gyro_calibration = z_gyro_temp;
     roll_calibration = roll_temp;
     pitch_calibration = pitch_temp;
-    //Pretty Print Milestone 1 Calibration Values
-    //printf("Calibration Values (x_gyro, y_gyro, z_gyro, pitch, roll),  (%10.5f, %10.5f, %10.5f, %10.5f, %10.5f)\n\r",x_gyro_calibration,y_gyro_calibration,z_gyro_calibration,pitch_calibration,roll_calibration);
-    
+
+    //Pretty Print Calibration Values
+    printf("Calibration Values (x_gyro, y_gyro, z_gyro, pitch, roll),  (%10.5f, %10.5f, %10.5f, %10.5f, %10.5f)\n\r",x_gyro_calibration,y_gyro_calibration,z_gyro_calibration,pitch_calibration,roll_calibration);
 }
 
 void read_imu()
@@ -171,7 +151,7 @@ void read_imu()
     }
     imu_data[5]= (float)vw / 32768 * (2*g); // Convert from Raw to "G's"
     
-    
+
     //Gyro
     
     address= 67; //Gyro X Value Address
@@ -206,15 +186,7 @@ void read_imu()
         vw=vw ^ 0xffff;
         vw=-vw-1;
     }
-    //TODO: Z gyro is not making any changes with the calibration when calibration is spot on
-    imu_data[2]= ((float)vw / 32768 * 500) - z_gyro_calibration; // Convert from Raw to deg/sec
-    //printf("z: vh  %d vl %d vw %d deg/sec %f \n\r", vh, vl, vw, imu_data[2]);
-    
-    
-    //  //Finding Pitch and Roll from Accel Data
-    //  pitch_angle = (-atan2( imu_data[4], -imu_data[5]) / 0.017453) - pitch_calibration; // angle of rotation x
-    //  roll_angle =  (atan2( imu_data[3], -imu_data[5]) / 0.017453) - roll_calibration; // angle of rot y
-    
+    imu_data[2]= ((float)vw / 32768 * 500) - z_gyro_calibration; // Convert from Raw to deg/sec    
     
 }
 
@@ -235,35 +207,20 @@ void update_filter()
     //convert to seconds
     imu_diff=imu_diff/1000000000; // delta t
     time_prev=time_curr;
+      
+    //Roll and pitch from accel data - roll (y-axis), pitch (x-axis)
+    float pitch_angle_accel = (-atan2( imu_data[4], -imu_data[5]) / 0.017453) - pitch_calibration; // angle of rotation x
+    float roll_angle_accel =  (atan2( imu_data[3], -imu_data[5]) / 0.017453) - roll_calibration; // angle of rot y
     
-    // roll (y-axis), pitch (x-axis)
+    //Change in Roll and Pitch from integrated gyro
+    float roll_gyro_delta = imu_data[1] * imu_diff;
+    float pitch_gyro_delta = imu_data[0] * imu_diff;
+    
+    //Complimentary Filter for roll, pitch here:
+    //Rollt+1=roll_accel*A+(1-A)*(roll_gyro_delta+ Rollt), //Where A << 1
     float A = 0.02;
-    float pitch_angle_accel, roll_angle_accel;
-    
-    // roll and pitch from accel data
-    pitch_angle_accel = (-atan2( imu_data[4], -imu_data[5]) / 0.017453) - pitch_calibration; // angle of rotation x
-    roll_angle_accel =  (atan2( imu_data[3], -imu_data[5]) / 0.017453) - roll_calibration; // angle of rot y
-    
-    // roll and pitch from integrated gyro
-    float roll_gyro_delta, pitch_gyro_delta;
-    roll_gyro_delta = imu_data[1] * imu_diff;
-    pitch_gyro_delta = imu_data[0] * imu_diff;
-    
-    roll_angle_gyro = roll_gyro_delta + roll_angle_gyro;  // integrated gyro
-    pitch_angle_gyro = pitch_gyro_delta + pitch_angle_gyro;
-    
-    //comp. filter for roll, pitch here:
-    //Rollt+1=roll_accel*A+(1-A)*(roll_gyro_delta+ Rollt), //Where A << 1 (try .02)
     roll_angle = roll_angle_accel * A + (1-A) * (roll_gyro_delta + roll_angle);
     pitch_angle = pitch_angle_accel * A + (1-A) * (pitch_gyro_delta + pitch_angle);
-    
-    // Print results for milestone 2
-    //printf("%10.5f %10.5f %10.5f\n\r", roll_angle, roll_angle_accel, roll_angle_gyro);
-    //printf("%10.5f %10.5f %10.5f\n\r", pitch_angle, pitch_angle_accel, pitch_angle_gyro);
-    
-    
-    
-
     
 }
 
@@ -312,3 +269,109 @@ int setup_imu()
     return 0;
 }
 
+
+void setup_keyboard()
+{
+
+  int segment_id;   
+  struct shmid_ds shmbuffer; 
+  int segment_size; 
+  const int shared_segment_size = 0x6400; 
+  int smhkey = 33222;
+  
+  /* Allocate a shared memory segment.  */ 
+  segment_id = shmget (smhkey, shared_segment_size, IPC_CREAT | 0666); 
+  /* Attach the shared memory segment.  */ 
+  shared_memory = (Keyboard*) shmat (segment_id, 0, 0); 
+  printf ("shared memory attached at address %p\n", shared_memory); 
+  /* Determine the segment's size. */ 
+  shmctl (segment_id, IPC_STAT, &shmbuffer); 
+  segment_size  =               shmbuffer.shm_segsz; 
+  printf ("segment size: %d\n", segment_size); 
+  /* Write a string to the shared memory segment.  */ 
+  //sprintf (shared_memory, "test!!!!."); 
+
+}
+
+
+//when cntrl+c pressed, kill motors
+void trap(int signal)
+{
+   printf("ending program\n\r");
+   run_program=0;
+}
+
+void safety_check() 
+{
+    if (abs(imu_data[0]) > MAX_GYRO_RATE) {
+        printf("X gyro speed over max rate - ending program\n\r");
+        run_program=0;
+    }
+    if (abs(imu_data[1]) > MAX_GYRO_RATE) {
+        printf("Y gyro speed over max rate - ending program\n\r");
+        run_program=0;
+    } 
+    if (abs(imu_data[2]) > MAX_GYRO_RATE) {
+        printf("Z gyro speed over max rate - ending program\n\r");
+        run_program=0;
+    } 
+    if (abs(pitch_angle) > 45) {
+        printf("Pitch Angle over maximum - ending program\n\r");
+        run_program=0;
+    }
+    if (abs(roll_angle) > 45) {
+        printf("Roll Angle over maximum - ending program\n\r");
+        run_program=0;
+    }
+    if (shared_memory->key_press == ' ') {
+        printf("Space Pressed - ending program\n\r");
+        run_program=0;
+    }
+    
+    //If the heartbeat has not changed, check how long it's been since an update occured
+    if ( prev_heartbeat_time == 0  || prev_heartbeat != shared_memory->heartbeat ) {
+        timespec_get(&te,TIME_UTC);
+        prev_heartbeat_time=te.tv_nsec;
+        prev_heartbeat = shared_memory->heartbeat;
+    } else {
+        //get current time in nanoseconds
+        timespec_get(&te,TIME_UTC);
+        time_curr=te.tv_nsec;
+
+        //compute time since last heartbeat
+        float diff = time_curr - prev_heartbeat_time;
+        
+        //check for rollover and convert to seconds
+        if (diff <= 0) diff += 1000000000;
+        diff = diff / 1000000000;
+
+        if (diff > 0.25) {
+            printf("Keyboard Timeout - ending program\n\r");
+            run_program=0;
+        }
+    } 
+
+}
+
+int main (int argc, char *argv[])
+{
+
+    //Perform Setup
+    setup_keyboard();
+    signal(SIGINT, &trap);
+    setup_imu();
+    calibrate_imu();
+
+    //TODO: Print Calibrating.......... and also reset keyboard values
+    while(run_program == 1)
+    {
+        //sleep(1);
+        read_imu();
+        update_filter();
+        safety_check();
+        
+        //printf("IMU Values: x_gyro= %10.5f, y_gyro = %10.5f, z_gyro = %10.5f, pitch =  %10.5f, roll = %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], pitch_angle, roll_angle);
+        
+    }
+    return 0;
+}
