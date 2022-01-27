@@ -98,6 +98,8 @@ int prev_heartbeat;
 
 //motor variables 
 int pwm;
+float pitch_eprev = 0; // initial "previous error"
+float pitch_eint = 0; // initial error integral
 
 
 /* ------ IMU DATA -------- */
@@ -391,9 +393,17 @@ void set_PWM( uint8_t channel, float time_on_us)
 void pid_update(float pitch_reference = 0) 
 {
     //args: pitch_reference is desired pitch
+
+    // Gains
     float P = 7;
+    float kd = 0;
+    float ki = 0;
 
     float pitch_error = pitch_reference - pitch_angle;
+    float pitch_edot = pitch_error - pitch_eprev;   // error difference
+    pitch_eprev = pitch_error;
+    pitch_eint = pitch_eint + pitch_error;
+    // u = kp * pitch_error + ki * eint + kd * pitch_edot
     float pwm = pitch_error * P;
 
     if (pwm > (PWM_MAX - PWM_NEUTRAL)) pwm = (PWM_MAX - PWM_NEUTRAL);
