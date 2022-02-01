@@ -1,7 +1,8 @@
-#include <stdio.h>
+#include <stdio.h>  
+#include <stdlib.h>  
 #include <wiringPi.h>
 #include <wiringPiI2C.h>
-#include <time.h>
+#include <time.h> 
 #include <math.h>
 #include <sys/time.h>
 #include <stdint.h>
@@ -30,14 +31,14 @@
 #define MAX_PITCH_ANGLE 45
 
 //motor constants 
-#define PWM_MAX 1300
-#define PWM_NEUTRAL 1100
+#define PWM_MAX 1500
+#define PWM_NEUTRAL 1250
 #define frequency 25000000.0
-#define LED0 0x6			
-#define LED0_ON_L 0x6		
-#define LED0_ON_H 0x7		
-#define LED0_OFF_L 0x8		
-#define LED0_OFF_H 0x9		
+#define LED0 0x6            
+#define LED0_ON_L 0x6       
+#define LED0_ON_H 0x7       
+#define LED0_OFF_L 0x8      
+#define LED0_OFF_H 0x9      
 #define LED_MULTIPLYER 4
 
 enum Ascale {
@@ -98,8 +99,17 @@ int prev_heartbeat;
 
 //motor variables 
 int pwm;
-float pitch_eprev = 0; // initial "previous error"
-float pitch_eint = 0; // initial error integral
+
+//pid variables
+float P = 0;
+float D = 0;
+float I = 0;
+float pitch_eint = 0;
+
+float pitch_prev = 0;
+float pitch_eprev = 0;
+
+float prev_error_time = 0;
 
 
 /* ------ IMU DATA -------- */
@@ -243,7 +253,7 @@ void update_filter()
     
     //Complimentary Filter for roll, pitch here:
     //Rollt+1=roll_accel*A+(1-A)*(roll_gyro_delta+ Rollt), //Where A << 1
-    float A = 0.02;
+    float A = 0.01;
     roll_angle = roll_angle_accel * A + (1-A) * (roll_gyro_delta + roll_angle);
     pitch_angle = pitch_angle_accel * A + (1-A) * (pitch_gyro_delta + pitch_angle);
     
@@ -317,8 +327,8 @@ void init_pwm()
       prescaleval -= 1;
       uint8_t prescale = floor(prescaleval+0.5);
       int settings = wiringPiI2CReadReg8(pwm, 0x00) & 0x7F;
-      int sleep	= settings | 0x10;
-      int wake 	= settings & 0xef;
+      int sleep = settings | 0x10;
+      int wake  = settings & 0xef;
       int restart = wake | 0x80;
       wiringPiI2CWriteReg8(pwm, 0x00, sleep);
       wiringPiI2CWriteReg8(pwm, 0xfe, prescale);
@@ -332,34 +342,34 @@ void init_pwm()
 
 void init_motor(uint8_t channel)
 {
-	int on_value=0;
+    int on_value=0;
 
-	int time_on_us=900;
-	uint16_t off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
+    int time_on_us=900;
+    uint16_t off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
 
-	wiringPiI2CWriteReg8(pwm, LED0_ON_L + LED_MULTIPLYER * channel, on_value & 0xFF);
-	wiringPiI2CWriteReg8(pwm, LED0_ON_H + LED_MULTIPLYER * channel, on_value >> 8);
-	wiringPiI2CWriteReg8(pwm, LED0_OFF_L + LED_MULTIPLYER * channel, off_value & 0xFF);
-	wiringPiI2CWriteReg8(pwm, LED0_OFF_H + LED_MULTIPLYER * channel, off_value >> 8);
-	delay(100);
+    wiringPiI2CWriteReg8(pwm, LED0_ON_L + LED_MULTIPLYER * channel, on_value & 0xFF);
+    wiringPiI2CWriteReg8(pwm, LED0_ON_H + LED_MULTIPLYER * channel, on_value >> 8);
+    wiringPiI2CWriteReg8(pwm, LED0_OFF_L + LED_MULTIPLYER * channel, off_value & 0xFF);
+    wiringPiI2CWriteReg8(pwm, LED0_OFF_H + LED_MULTIPLYER * channel, off_value >> 8);
+    delay(100);
 
-	 time_on_us=1200;
-	 off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
+     time_on_us=1200;
+     off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
 
-	wiringPiI2CWriteReg8(pwm, LED0_ON_L + LED_MULTIPLYER * channel, on_value & 0xFF);
-	wiringPiI2CWriteReg8(pwm, LED0_ON_H + LED_MULTIPLYER * channel, on_value >> 8);
-	wiringPiI2CWriteReg8(pwm, LED0_OFF_L + LED_MULTIPLYER * channel, off_value & 0xFF);
-	wiringPiI2CWriteReg8(pwm, LED0_OFF_H + LED_MULTIPLYER * channel, off_value >> 8);
-	delay(100);
+    wiringPiI2CWriteReg8(pwm, LED0_ON_L + LED_MULTIPLYER * channel, on_value & 0xFF);
+    wiringPiI2CWriteReg8(pwm, LED0_ON_H + LED_MULTIPLYER * channel, on_value >> 8);
+    wiringPiI2CWriteReg8(pwm, LED0_OFF_L + LED_MULTIPLYER * channel, off_value & 0xFF);
+    wiringPiI2CWriteReg8(pwm, LED0_OFF_H + LED_MULTIPLYER * channel, off_value >> 8);
+    delay(100);
 
-	 time_on_us=1000;
-	 off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
+     time_on_us=1000;
+     off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
 
-	wiringPiI2CWriteReg8(pwm, LED0_ON_L + LED_MULTIPLYER * channel, on_value & 0xFF);
-	wiringPiI2CWriteReg8(pwm, LED0_ON_H + LED_MULTIPLYER * channel, on_value >> 8);
-	wiringPiI2CWriteReg8(pwm, LED0_OFF_L + LED_MULTIPLYER * channel, off_value & 0xFF);
-	wiringPiI2CWriteReg8(pwm, LED0_OFF_H + LED_MULTIPLYER * channel, off_value >> 8);
-	delay(100);
+    wiringPiI2CWriteReg8(pwm, LED0_ON_L + LED_MULTIPLYER * channel, on_value & 0xFF);
+    wiringPiI2CWriteReg8(pwm, LED0_ON_H + LED_MULTIPLYER * channel, on_value >> 8);
+    wiringPiI2CWriteReg8(pwm, LED0_OFF_L + LED_MULTIPLYER * channel, off_value & 0xFF);
+    wiringPiI2CWriteReg8(pwm, LED0_OFF_H + LED_MULTIPLYER * channel, off_value >> 8);
+    delay(100);
 
 }
 
@@ -376,14 +386,14 @@ void set_PWM( uint8_t channel, float time_on_us)
     {
       time_on_us=1000;
     }
-  	uint16_t off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
-  	wiringPiI2CWriteReg16(pwm, LED0_OFF_L + LED_MULTIPLYER * channel,off_value);
+    uint16_t off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
+    wiringPiI2CWriteReg16(pwm, LED0_OFF_L + LED_MULTIPLYER * channel,off_value);
   }
   else
   {  
     time_on_us=1000;   
-  	uint16_t off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
-  	wiringPiI2CWriteReg16(pwm, LED0_OFF_L + LED_MULTIPLYER * channel,off_value);
+    uint16_t off_value=round((time_on_us*4096.f)/(1000000.f/400.0));
+    wiringPiI2CWriteReg16(pwm, LED0_OFF_L + LED_MULTIPLYER * channel,off_value);
   }
 }
 
@@ -393,27 +403,49 @@ void set_PWM( uint8_t channel, float time_on_us)
 void pid_update(float pitch_reference = 0) 
 {
     //args: pitch_reference is desired pitch
+    //float P = 12; //5-10
+    //float D = 1; //5-100
+    //float I = 0.05;
 
-    // Gains
-    float P = 7;
-    float kd = 0;
-    float ki = 0;
 
+    if ( prev_error_time == 0) {
+        timespec_get(&te,TIME_UTC);
+        prev_error_time=te.tv_nsec;
+    }
+    //Get dt 
+    timespec_get(&te,TIME_UTC);
+    time_curr=te.tv_nsec;
+    //compute time since last check
+    float dt = time_curr - prev_error_time;
+    //check for rollover and convert to seconds
+    if (dt <= 0) dt += 1000000000;
+    dt = dt / 1000000000;
+    prev_error_time=time_curr;
+ 
     float pitch_error = pitch_reference - pitch_angle;
-    float pitch_edot = pitch_error - pitch_eprev;   // error difference
-    pitch_eprev = pitch_error;
-    pitch_eint = pitch_eint + pitch_error;
-    // u = kp * pitch_error + ki * eint + kd * pitch_edot
-    float pwm = pitch_error * P;
 
-    if (pwm > (PWM_MAX - PWM_NEUTRAL)) pwm = (PWM_MAX - PWM_NEUTRAL);
+    float pitch_velocity = (pitch_prev - pitch_angle) / dt;
+    pitch_prev = pitch_angle;
 
-    set_PWM(0, PWM_NEUTRAL + pwm);
-    set_PWM(3, PWM_NEUTRAL + pwm);
-    set_PWM(1, PWM_NEUTRAL - pwm);
-    set_PWM(2, PWM_NEUTRAL - pwm);
+    pitch_eint += pitch_error * I;
+
+    float pwm = pitch_error * P  + pitch_velocity * D + pitch_eint;
+
+    float front = PWM_NEUTRAL + pwm;
+    float back = PWM_NEUTRAL - pwm;
+    if (front > PWM_MAX) front = PWM_MAX;
+    if (front < 1000) front = 1000;
+    if (back > PWM_MAX) back = PWM_MAX;
+    if (back < 1000) back = 1000;
+
+
+    set_PWM(0, front);
+    set_PWM(3, front);
+    set_PWM(1, back);
+    set_PWM(2, back);
     
-    printf("%10.5f %10.5f %10.5f %10.5f\n", pitch_angle, pitch_angle_accel, (PWM_NEUTRAL + pwm), (PWM_NEUTRAL - pwm));
+    printf("%10.5f %10.5f %10.5f %10.5f\n", pitch_angle, pitch_angle_accel, front, back);
+
 
 }
 
@@ -515,7 +547,10 @@ void safety_check()
 /* ------ MAIN -------- */
 
 int main (int argc, char *argv[])
-{
+{   
+    P = atof(argv[1]);
+    D = atof(argv[2]);
+    I = atof(argv[3]);
 
     //Safety Setup
     setup_keyboard();
@@ -531,13 +566,11 @@ int main (int argc, char *argv[])
 
     //IMU Setup
     setup_imu();
-    calibrate_imu();
     printf("Calibrating....");
-    
-    pid_update();
+    calibrate_imu();
+
     while(run_program == 1)
     {
-        //sleep(1);
         read_imu();
         update_filter();
         safety_check();
