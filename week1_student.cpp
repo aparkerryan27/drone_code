@@ -31,8 +31,12 @@
 #define MAX_PITCH_ANGLE 45
 
 //motor constants 
-#define PWM_MAX 1500
-#define PWM_NEUTRAL 1250
+#define PWM_MAX 1800
+#define THRUST_NEUTRAL 1400
+#define THRUST_MAX 150
+#define MAX_PITCH_DESIRED 15
+#define MAX_ROLL_DESIRED 15
+
 #define frequency 25000000.0
 #define LED0 0x6            
 #define LED0_ON_L 0x6       
@@ -84,16 +88,21 @@ float pitch_angle_accel = 0;
 float pitch_angle_gyro = 0;
 float roll_angle_gyro = 0;
 
-//Keyboard Setup
-struct Keyboard {
-  char key_press;
-  int heartbeat;
-  int version;
+//Data Setup
+//update shared memory struct
+
+struct data {
+  int keypress;
+  int pitch;
+  int roll;
+  int yaw;
+  int thrust;
+  int sequence_num;
 };
-Keyboard* shared_memory; 
+data* shared_memory; 
 int run_program=1;
-long prev_heartbeat_time = 0;
-int prev_heartbeat;
+long prev_sequence_num_time = 0;
+int prev_sequence_num;
 
 
 
@@ -105,11 +114,17 @@ float P = 0;
 float D = 0;
 float I = 0;
 float pitch_eint = 0;
-
 float pitch_prev = 0;
 float pitch_eprev = 0;
 
+float roll_eint = 0;
+float roll_prev = 0;
+float roll_eprev = 0;
+
 float prev_error_time = 0;
+
+bool pause_motors = false;
+bool calibrate_motors = false;
 
 
 /* ------ IMU DATA -------- */
@@ -237,7 +252,7 @@ void update_filter()
     //check for rollover
     if(imu_diff<=0)
     {
-        imu_diff+=1000000000;
+        imu_diff+=1000000000; 
     }
     //convert to seconds
     imu_diff=imu_diff/1000000000; // delta t
@@ -253,7 +268,7 @@ void update_filter()
     
     //Complimentary Filter for roll, pitch here:
     //Rollt+1=roll_accel*A+(1-A)*(roll_gyro_delta+ Rollt), //Where A << 1
-    float A = 0.01;
+    float A = 0.003; //5
     roll_angle = roll_angle_accel * A + (1-A) * (roll_gyro_delta + roll_angle);
     pitch_angle = pitch_angle_accel * A + (1-A) * (pitch_gyro_delta + pitch_angle);
     
@@ -397,16 +412,28 @@ void set_PWM( uint8_t channel, float time_on_us)
   }
 }
 
+void stop_motors() {
+    set_PWM(0,0);
+    set_PWM(1,0);
+    set_PWM(2,0);
+    set_PWM(3,0);
+}
+
 
 /* ----------- PID CONTROL ------------- */
 
-void pid_update(float pitch_reference = 0) 
+float normalize_joystick_data(int js_value) {
+    return -1 * ((((float)js_value - 16) / 224)*2 - 1);
+}
+
+void pid_update() 
 {
     //args: pitch_reference is desired pitch
-    //float P = 12; //5-10
-    //float D = 1; //5-100
-    //float I = 0.05;
+    float pitch_P = P;//15;    //noise, no overshoot 18 4 0.06     //overshoot, no noise 12 2 0.03
+    float pitch_D = D;//2; 
+    float pitch_I = I;//0.04;
 
+    float thrust = THRUST_NEUTRAL + THRUST_MAX * normalize_joystick_data(shared_memory->thrust);
 
     if ( prev_error_time == 0) {
         timespec_get(&te,TIME_UTC);
@@ -417,35 +444,76 @@ void pid_update(float pitch_reference = 0)
     time_curr=te.tv_nsec;
     //compute time since last check
     float dt = time_curr - prev_error_time;
-    //check for rollover and convert to seconds
+    //check for rollover and convert to seconds 
     if (dt <= 0) dt += 1000000000;
     dt = dt / 1000000000;
     prev_error_time=time_curr;
  
-    float pitch_error = pitch_reference - pitch_angle;
+    float desired_pitch = normalize_joystick_data(shared_memory->pitch) * MAX_PITCH_DESIRED;
+    float pitch_error = desired_pitch - pitch_angle;
 
     float pitch_velocity = (pitch_prev - pitch_angle) / dt;
     pitch_prev = pitch_angle;
 
-    pitch_eint += pitch_error * I;
-
-    float pwm = pitch_error * P  + pitch_velocity * D + pitch_eint;
-
-    float front = PWM_NEUTRAL + pwm;
-    float back = PWM_NEUTRAL - pwm;
-    if (front > PWM_MAX) front = PWM_MAX;
-    if (front < 1000) front = 1000;
-    if (back > PWM_MAX) back = PWM_MAX;
-    if (back < 1000) back = 1000;
+    pitch_eint += pitch_error * pitch_I;
 
 
-    set_PWM(0, front);
-    set_PWM(3, front);
-    set_PWM(1, back);
-    set_PWM(2, back);
+    float roll_P = 0;//17; 
+    float roll_D = 0;//2; 
+    float roll_I = 0;//0.05;
+    float desired_roll = normalize_joystick_data(shared_memory->roll) * MAX_ROLL_DESIRED;
+    float roll_error = desired_roll - roll_angle;
+
+    float roll_velocity = (roll_prev - roll_angle) / dt;
+    roll_prev = roll_angle;
+
+    roll_eint += roll_error * roll_I;
+
+    float pitch_pwm = pitch_error * pitch_P  + pitch_velocity * pitch_D + pitch_eint;
+    float roll_pwm = roll_error * roll_P  + roll_velocity * roll_D + roll_eint;
+
+    float front = thrust + pitch_pwm;
+    float back = thrust - pitch_pwm;
+    float left = thrust - roll_pwm;
+    float right = thrust + roll_pwm;
+
+    float fr = front/2 + right/2;
+    float fl = front/2 + left/2;
+    float br = back/2 + right/2;
+    float bl = back/2 + left/2;
+
+    if (fr > PWM_MAX) front = PWM_MAX;
+    if (fr < 1000) front = 1000;
+    if (fl > PWM_MAX) back = PWM_MAX;
+    if (fl < 1000) back = 1000;
+
+    if (br > PWM_MAX) front = PWM_MAX;
+    if (br < 1000) front = 1000;
+    if (bl > PWM_MAX) back = PWM_MAX;
+    if (bl < 1000) back = 1000;
+
+    set_PWM(0, front); //fr
+    set_PWM(3, front); //fl
+    set_PWM(1, back); //br
+    set_PWM(2, back); //bl
+
+    //PWM printouts
+    //printf("fr: %10.5f, fl: %10.5f, br: %10.5f, bl: %10.5f\n", fr, fl, br, bl);
     
-    printf("%10.5f %10.5f %10.5f %10.5f\n", pitch_angle, pitch_angle_accel, front, back);
+    //Desired to Actual Angle Measurements
+    printf("%10.5f %10.5f\n", desired_roll, roll_angle);
 
+
+    /* Testing Roll */ 
+    //attempting to eliminate error: high area between curves at all points, 
+    /*
+    pi@raspberrypi:~/flight_controller $ ./week1 17 2 0.06 > roll_control.txt
+pi@raspberrypi:~/flight_controller $ ./week1 17 2 0.04 > roll_control.txt
+^Cpi@raspberrypi:~/flight_controller $ ./week1 18 2 0.05 > roll_control.txt
+^Cpi@raspberrypi:~/flight_controller $ ./week1 18 1.7 0.05 > roll_control.txt
+pi@raspberrypi:~/flight_controller $ ./week1 19 1.8 0.06 > roll_control.txt
+^Cpi@raspberrypi:~/flight_controller $ ./week1 20 1.8 0.06 > roll_control.txt
+*/
 
 }
 
@@ -453,7 +521,7 @@ void pid_update(float pitch_reference = 0)
 
 /* ------ SAFETY -------- */
 
-void setup_keyboard()
+void setup_shared_data()
 {
 
   int segment_id;   
@@ -465,7 +533,7 @@ void setup_keyboard()
   /* Allocate a shared memory segment.  */ 
   segment_id = shmget (smhkey, shared_segment_size, IPC_CREAT | 0666); 
   /* Attach the shared memory segment.  */ 
-  shared_memory = (Keyboard*) shmat (segment_id, 0, 0); 
+  shared_memory = (data*) shmat (segment_id, 0, 0); 
   printf ("shared memory attached at address %p\n", shared_memory); 
   /* Determine the segment's size. */ 
   shmctl (segment_id, IPC_STAT, &shmbuffer); 
@@ -482,10 +550,7 @@ void trap(int signal)
 {
     printf("ending program\n\r");
     run_program=0;
-    set_PWM(0,0);
-    set_PWM(1,0);
-    set_PWM(2,0);
-    set_PWM(3,0);
+    stop_motors();
 }
 
 void safety_check() 
@@ -510,35 +575,48 @@ void safety_check()
         printf("Roll Angle over maximum - ending program\n\r");
         run_program=0;
     }
-    if (shared_memory->key_press == ' ') {
-        printf("Space Pressed - ending program\n\r");
+    if (shared_memory->keypress == 32) {
+        printf("Kill Pressed - ending program\n\r");
         run_program=0;
     }
     
-    /* 
+    
     //Keyboard Timeout
-    if ( prev_heartbeat_time == 0  || prev_heartbeat != shared_memory->heartbeat ) {
+    if ( prev_sequence_num_time == 0  || prev_sequence_num != shared_memory->sequence_num ) {
         timespec_get(&te,TIME_UTC);
-        prev_heartbeat_time=te.tv_nsec;
-        prev_heartbeat = shared_memory->heartbeat;
+        prev_sequence_num_time=te.tv_nsec;
+        prev_sequence_num = shared_memory->sequence_num;
     } else {
         //get current time in nanoseconds
         timespec_get(&te,TIME_UTC);
         time_curr=te.tv_nsec;
 
-        //compute time since last heartbeat
-        float diff = time_curr - prev_heartbeat_time;
+        //compute time since last sequence_num
+        float diff = time_curr - prev_sequence_num_time;
         
         //check for rollover and convert to seconds
         if (diff <= 0) diff += 1000000000;
         diff = diff / 1000000000;
 
-        if (diff > 0.25) {
-            printf("Keyboard Timeout - ending program\n\r");
+        if (diff > 2) {
+            printf("Client/Server Timeout - ending program\n\r");
             run_program=0;
         }
     } 
-    */
+
+
+    //Pause + Unpause
+    if (shared_memory->keypress == 33) {
+        pause_motors = true;
+    }
+    if (shared_memory->keypress == 34) {
+        pause_motors = false;
+    }
+
+    //Calibrate
+    if (shared_memory->keypress == 35) {
+        calibrate_motors = true;
+    }
 
 }
 
@@ -553,7 +631,7 @@ int main (int argc, char *argv[])
     I = atof(argv[3]);
 
     //Safety Setup
-    setup_keyboard();
+    setup_shared_data();
     signal(SIGINT, &trap);
 
     //Motor Setup
@@ -574,15 +652,21 @@ int main (int argc, char *argv[])
         read_imu();
         update_filter();
         safety_check();
-        pid_update();
+        if (calibrate_motors) {
+            stop_motors();
+            calibrate_imu();
+            calibrate_motors = false;
+        }
+        if (pause_motors) {
+            stop_motors();
+        } else {
+            pid_update();
+        }
+        
         //printf("IMU Values: x_gyro= %10.5f, y_gyro = %10.5f, z_gyro = %10.5f, pitch =  %10.5f, roll = %10.5f\n\r",imu_data[0],imu_data[1],imu_data[2], pitch_angle, roll_angle);
         
     }
-    //turn off motors when program is ended
-    set_PWM(0,0);
-    set_PWM(1,0);
-    set_PWM(2,0);
-    set_PWM(3,0);
+    stop_motors();
 
     return 0;
 }
