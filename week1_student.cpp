@@ -31,14 +31,15 @@
 #define MAX_PITCH_ANGLE 45
 
 //motor constants 
-#define PWM_MAX 1800
-#define THRUST_NEUTRAL 1400
-#define THRUST_MAX 150
-#define MAX_PITCH_DESIRED 15
-#define MAX_ROLL_DESIRED 15
+#define PWM_MAX 1700
+#define THRUST_NEUTRAL 1300
+#define THRUST_MAX 50 //was 150, but that makes it lift off the ground!
+#define MAX_PITCH_DESIRED 10
+#define MAX_ROLL_DESIRED 10
+#define MAX_YAW_RATE_DESIRED 50
 
 #define frequency 25000000.0
-#define LED0 0x6            
+#define LED0 0x6             
 #define LED0_ON_L 0x6       
 #define LED0_ON_H 0x7       
 #define LED0_OFF_L 0x8      
@@ -76,7 +77,6 @@ float imu_data[6]; //gyro xyz, accel xyz
 long time_curr;
 long time_prev;
 struct timespec te;
-float yaw=0;
 float pitch_angle=0;
 float roll_angle=0;
 
@@ -87,6 +87,7 @@ float pitch_angle_accel = 0;
 // new globals for gyro
 float pitch_angle_gyro = 0;
 float roll_angle_gyro = 0;
+float yaw_rate = 0;
 
 //Data Setup
 //update shared memory struct
@@ -102,7 +103,7 @@ struct data {
 data* shared_memory; 
 int run_program=1;
 long prev_sequence_num_time = 0;
-int prev_sequence_num;
+int prev_sequence_num = 0;
 
 
 
@@ -262,9 +263,10 @@ void update_filter()
     pitch_angle_accel = (-atan2( imu_data[4], -imu_data[5]) / 0.017453) - pitch_calibration; // angle of rotation x
     roll_angle_accel =  (atan2( imu_data[3], -imu_data[5]) / 0.017453) - roll_calibration; // angle of rot y
     
-    //Change in Roll and Pitch from integrated gyro
+    //Change in Roll, Pitch, Yaw from integrated gyro
     float roll_gyro_delta = imu_data[1] * imu_diff;
     float pitch_gyro_delta = imu_data[0] * imu_diff;
+    yaw_rate = imu_data[2];
     
     //Complimentary Filter for roll, pitch here:
     //Rollt+1=roll_accel*A+(1-A)*(roll_gyro_delta+ Rollt), //Where A << 1
@@ -428,12 +430,7 @@ float normalize_joystick_data(int js_value) {
 
 void pid_update() 
 {
-    //args: pitch_reference is desired pitch
-    float pitch_P = P;//15;    //noise, no overshoot 18 4 0.06     //overshoot, no noise 12 2 0.03
-    float pitch_D = D;//2; 
-    float pitch_I = I;//0.04;
-
-    float thrust = THRUST_NEUTRAL + THRUST_MAX * normalize_joystick_data(shared_memory->thrust);
+    float thrust = THRUST_NEUTRAL + THRUST_MAX * -1 * normalize_joystick_data(shared_memory->thrust);
 
     if ( prev_error_time == 0) {
         timespec_get(&te,TIME_UTC);
@@ -449,71 +446,56 @@ void pid_update()
     dt = dt / 1000000000;
     prev_error_time=time_curr;
  
+    //compute pitch PID control
+    float pitch_P = 15;    //noise, no overshoot 18 4 0.06     //overshoot, no noise 12 2 0.03
+    float pitch_D = 2; 
+    float pitch_I = 0.04;
     float desired_pitch = normalize_joystick_data(shared_memory->pitch) * MAX_PITCH_DESIRED;
     float pitch_error = desired_pitch - pitch_angle;
-
     float pitch_velocity = (pitch_prev - pitch_angle) / dt;
     pitch_prev = pitch_angle;
-
     pitch_eint += pitch_error * pitch_I;
 
-
-    float roll_P = 0;//17; 
-    float roll_D = 0;//2; 
-    float roll_I = 0;//0.05;
+    //compute roll PID control
+    float roll_P = 17;
+    float roll_D = 2;
+    float roll_I = 0.05;
     float desired_roll = normalize_joystick_data(shared_memory->roll) * MAX_ROLL_DESIRED;
     float roll_error = desired_roll - roll_angle;
-
     float roll_velocity = (roll_prev - roll_angle) / dt;
     roll_prev = roll_angle;
-
     roll_eint += roll_error * roll_I;
 
+    //compute yaw P control
+    float yaw_P = P; //0.5;
+
+    //compute combined and check boundaries
     float pitch_pwm = pitch_error * pitch_P  + pitch_velocity * pitch_D + pitch_eint;
     float roll_pwm = roll_error * roll_P  + roll_velocity * roll_D + roll_eint;
+    float yaw_pwm = yaw_rate * yaw_P + normalize_joystick_data(shared_memory->yaw) * MAX_YAW_RATE_DESIRED;
 
-    float front = thrust + pitch_pwm;
-    float back = thrust - pitch_pwm;
-    float left = thrust - roll_pwm;
-    float right = thrust + roll_pwm;
+    float fr = thrust + pitch_pwm + roll_pwm + yaw_pwm; 
+    float br = thrust - pitch_pwm + roll_pwm - yaw_pwm;
+    float bl = thrust - pitch_pwm - roll_pwm + yaw_pwm;
+    float fl = thrust + pitch_pwm - roll_pwm - yaw_pwm;
 
-    float fr = front/2 + right/2;
-    float fl = front/2 + left/2;
-    float br = back/2 + right/2;
-    float bl = back/2 + left/2;
+    if (fr > PWM_MAX) fr = PWM_MAX;
+    if (fr < 1000) fr = 1000;
+    if (fl > PWM_MAX) fl = PWM_MAX;
+    if (fl < 1000) fl = 1000;
+    if (br > PWM_MAX) br = PWM_MAX;
+    if (br < 1000) br = 1000;
+    if (bl > PWM_MAX) bl = PWM_MAX;
+    if (bl < 1000) bl = 1000;
 
-    if (fr > PWM_MAX) front = PWM_MAX;
-    if (fr < 1000) front = 1000;
-    if (fl > PWM_MAX) back = PWM_MAX;
-    if (fl < 1000) back = 1000;
-
-    if (br > PWM_MAX) front = PWM_MAX;
-    if (br < 1000) front = 1000;
-    if (bl > PWM_MAX) back = PWM_MAX;
-    if (bl < 1000) back = 1000;
-
-    set_PWM(0, front); //fr
-    set_PWM(3, front); //fl
-    set_PWM(1, back); //br
-    set_PWM(2, back); //bl
-
-    //PWM printouts
-    //printf("fr: %10.5f, fl: %10.5f, br: %10.5f, bl: %10.5f\n", fr, fl, br, bl);
+    set_PWM(0, fr); 
+    set_PWM(3, fl); 
+    set_PWM(1, br); 
+    set_PWM(2, bl);
     
-    //Desired to Actual Angle Measurements
-    printf("%10.5f %10.5f\n", desired_roll, roll_angle);
-
-
-    /* Testing Roll */ 
-    //attempting to eliminate error: high area between curves at all points, 
-    /*
-    pi@raspberrypi:~/flight_controller $ ./week1 17 2 0.06 > roll_control.txt
-pi@raspberrypi:~/flight_controller $ ./week1 17 2 0.04 > roll_control.txt
-^Cpi@raspberrypi:~/flight_controller $ ./week1 18 2 0.05 > roll_control.txt
-^Cpi@raspberrypi:~/flight_controller $ ./week1 18 1.7 0.05 > roll_control.txt
-pi@raspberrypi:~/flight_controller $ ./week1 19 1.8 0.06 > roll_control.txt
-^Cpi@raspberrypi:~/flight_controller $ ./week1 20 1.8 0.06 > roll_control.txt
-*/
+    //PWM printouts
+    printf("%10.5f\n", yaw_pwm);
+    //printf("fr: %10.5f, fl: %10.5f, br: %10.5f, bl: %10.5f\n", fr, fl, br, bl);
 
 }
 
@@ -534,11 +516,11 @@ void setup_shared_data()
   segment_id = shmget (smhkey, shared_segment_size, IPC_CREAT | 0666); 
   /* Attach the shared memory segment.  */ 
   shared_memory = (data*) shmat (segment_id, 0, 0); 
-  printf ("shared memory attached at address %p\n", shared_memory); 
+  //printf ("shared memory attached at address %p\n", shared_memory); 
   /* Determine the segment's size. */ 
   shmctl (segment_id, IPC_STAT, &shmbuffer); 
   segment_size  =               shmbuffer.shm_segsz; 
-  printf ("segment size: %d\n", segment_size); 
+  //printf ("segment size: %d\n", segment_size); 
   /* Write a string to the shared memory segment.  */ 
   //sprintf (shared_memory, "test!!!!."); 
 
@@ -597,8 +579,7 @@ void safety_check()
         //check for rollover and convert to seconds
         if (diff <= 0) diff += 1000000000;
         diff = diff / 1000000000;
-
-        if (diff > 2) {
+        if (diff > 0.9) {
             printf("Client/Server Timeout - ending program\n\r");
             run_program=0;
         }
@@ -627,11 +608,11 @@ void safety_check()
 int main (int argc, char *argv[])
 {   
     P = atof(argv[1]);
-    D = atof(argv[2]);
-    I = atof(argv[3]);
+    //D = atof(argv[2]);
+    //I = atof(argv[3]);
 
     //Safety Setup
-    setup_shared_data();
+    setup_shared_data(); 
     signal(SIGINT, &trap);
 
     //Motor Setup
