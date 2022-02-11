@@ -26,17 +26,17 @@
 #define PWR_MGMT_2       0x6C
 
 // safety constants
-#define MAX_GYRO_RATE 300
-#define MAX_ROLL_ANGLE 45
-#define MAX_PITCH_ANGLE 45
+#define MAX_GYRO_RATE 400 //was 300
+#define MAX_ROLL_ANGLE 40 //was 45
+#define MAX_PITCH_ANGLE 40 //was 45
 
 //motor constants 
-#define PWM_MAX 1700
-#define THRUST_NEUTRAL 1300
-#define THRUST_MAX 50 //was 150, but that makes it lift off the ground!
+#define PWM_MAX 1800
+#define THRUST_NEUTRAL 1400
+#define THRUST_MAX 200 //was 150, but that makes it lift off the ground!
 #define MAX_PITCH_DESIRED 10
 #define MAX_ROLL_DESIRED 10
-#define MAX_YAW_RATE_DESIRED 50
+#define MAX_YAW_RATE_DESIRED 10
 
 #define frequency 25000000.0
 #define LED0 0x6             
@@ -58,7 +58,7 @@ enum Gscale {
     GFS_500DPS,
     GFS_1000DPS,
     GFS_2000DPS
-};
+};  
 
 int setup_imu();
 void calibrate_imu();
@@ -87,7 +87,6 @@ float pitch_angle_accel = 0;
 // new globals for gyro
 float pitch_angle_gyro = 0;
 float roll_angle_gyro = 0;
-float yaw_rate = 0;
 
 //Data Setup
 //update shared memory struct
@@ -266,7 +265,6 @@ void update_filter()
     //Change in Roll, Pitch, Yaw from integrated gyro
     float roll_gyro_delta = imu_data[1] * imu_diff;
     float pitch_gyro_delta = imu_data[0] * imu_diff;
-    yaw_rate = imu_data[2];
     
     //Complimentary Filter for roll, pitch here:
     //Rollt+1=roll_accel*A+(1-A)*(roll_gyro_delta+ Rollt), //Where A << 1
@@ -467,12 +465,13 @@ void pid_update()
     roll_eint += roll_error * roll_I;
 
     //compute yaw P control
-    float yaw_P = P; //0.5;
+    float yaw_P = P;//2;
+    float yaw_diff = normalize_joystick_data(shared_memory->yaw) * MAX_YAW_RATE_DESIRED - imu_data[2]; //this MAX should be degrees per second, but it does not appear to be
 
     //compute combined and check boundaries
     float pitch_pwm = pitch_error * pitch_P  + pitch_velocity * pitch_D + pitch_eint;
     float roll_pwm = roll_error * roll_P  + roll_velocity * roll_D + roll_eint;
-    float yaw_pwm = yaw_rate * yaw_P + normalize_joystick_data(shared_memory->yaw) * MAX_YAW_RATE_DESIRED;
+    float yaw_pwm =  yaw_diff * yaw_P;
 
     float fr = thrust + pitch_pwm + roll_pwm + yaw_pwm; 
     float br = thrust - pitch_pwm + roll_pwm - yaw_pwm;
