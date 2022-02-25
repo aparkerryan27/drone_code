@@ -133,13 +133,22 @@ int last_vive_time = 0;
 float vive_yaw = 0;
 
 float vive_x_estimated = 0;
+float prev_vive_x = 0;
 float vive_roll = 0;
+float vive_roll_diff = 0;
+float vive_roll_velocity = 0;
 
 float vive_y_estimated = 0;
 float prev_vive_y = 0;
 float vive_pitch = 0;
 float vive_pitch_diff = 0;
 float vive_pitch_velocity = 0;
+
+float vive_z_estimated = 0;
+float prev_vive_z = 0;
+float vive_thrust = 0;
+float vive_height_diff = 0;
+float vive_height_velocity = 0;
 
 //pid input variables
 float P = 0;
@@ -453,8 +462,21 @@ float normalize_joystick_data(int js_value) {
 
 void vive_update()
 {
+
+
+    //TODO: modify gamepad input to just change desire_p?? 
+    //mixed autonomy doesn't make sense if the drone wants to resist change !!!!!!
+
+
     float P_vive_pitch = P; //0.03 (or 1)
     float D_vive_pitch = D; //0.7 (?)
+
+
+    float P_vive_roll = 0; //setting these to 0 cancels out their implementation for now
+    float D_vive_roll = 0;
+
+    float P_vive_thrust = 0;
+    float D_vive_thrust = 0;
 
     //update version
     last_vive_version = local_p.version;
@@ -464,10 +486,12 @@ void vive_update()
     float P_vive_yaw = 400;
     vive_yaw = P_vive_yaw * (local_p.yaw - desired_yaw);
 
-    //Pitch angle PD controller
-    vive_y_estimated = vive_y_estimated * 0.6 + local_p.y * 0.4; //exponential filter
+    //Estimated position via exponential filter
+    vive_y_estimated = vive_y_estimated * 0.6 + local_p.y * 0.4;
+    vive_x_estimated = vive_x_estimated * 0.6 + local_p.x * 0.4; 
+    vive_z_estimated = vive_z_estimated * 0.6 + local_p.z * 0.4; 
 
-    //Update D portion if there has beenzzz
+    //Update D only if there is new position information
     if ( last_vive_version == 0  || last_vive_version != local_p.version ) {
         
         timespec_get(&te,TIME_UTC);
@@ -483,84 +507,35 @@ void vive_update()
         last_vive_time = te.tv_nsec;
         last_vive_version = local_p.version;
 
+        //pitch values (lock y axis)
         vive_pitch_diff = (desired_p.y - vive_y_estimated);
         vive_pitch_velocity = (vive_y_estimated - prev_vive_y) / dt;
         prev_vive_y = vive_y_estimated; //now set previous value for next computation
+
+        //roll values (lock x axis)
+        vive_roll_diff = (desired_p.x - vive_x_estimated);
+        vive_roll_velocity = (vive_y_estimated - prev_vive_y) / dt;
+        prev_vive_x = vive_x_estimated; 
+
+        //thrust values (lock z axis) 
+        vive_height_diff = (desired_p.z - vive_z_estimated);
+        vive_height_velocity = (vive_z_estimated - prev_vive_z) / dt;
+        prev_vive_z = vive_z_estimated; 
+
+        //compute PD controller values for PWM modification
+        vive_pitch = P_vive_pitch * vive_pitch_diff + D_vive_pitch * (vive_pitch_velocity);
+        vive_roll = P_vive_roll * vive_roll_diff + D_vive_roll * (vive_roll_velocity);  
+        vive_thrust = P_vive_thrust * vive_height_diff + D_vive_thrust * (vive_height_velocity);  
     }
 
-    vive_pitch = P_vive_pitch * vive_pitch_diff + D_vive_pitch * (vive_pitch_velocity); 
-
+    
     //printf("Desired Values= x: %10.5f, y: %10.5f, z: %10.5f, yaw: %10.5f\n\r", desired_p.x, desired_p.y, desired_p.z, desired_p.yaw);
     printf("Vive Values= x: %10.5f, y: %10.5f, z: %10.5f, yaw: %10.5f\n\r", local_p.x, local_p.y, local_p.z, local_p.yaw);
-
-    /*
-
-    float thrust = THRUST_NEUTRAL + THRUST_MAX * -1 * normalize_joystick_data(shared_memory->thrust);
-
-    if ( prev_error_time == 0) {
-        timespec_get(&te,TIME_UTC);
-        prev_error_time=te.tv_nsec;
-    }
-    
- 
-    //compute pitch PID control
-    float pitch_P = 10;  //15  //noise, no overshoot 18 4 0.06     //overshoot, no noise 12 2 0.03
-    float pitch_D = 1; //2 
-    float pitch_I = 0.04; //0.04
-    float desired_pitch = normalize_joystick_data(shared_memory->pitch) * MAX_PITCH_DESIRED;
-    float pitch_error = desired_pitch - pitch_angle;
-    float pitch_velocity = (pitch_prev - pitch_angle) / dt;
-    pitch_prev = pitch_angle;
-    pitch_eint += pitch_error * pitch_I;
-
-    //compute roll PID control
-    float roll_P = 11; //17
-    float roll_D = 1; //2
-    float roll_I = 0.05; //0.05
-    float desired_roll = normalize_joystick_data(shared_memory->roll) * MAX_ROLL_DESIRED;
-    float roll_error = desired_roll - roll_angle;
-    float roll_velocity = (roll_prev - roll_angle) / dt;
-    roll_prev = roll_angle;
-    roll_eint += roll_error * roll_I;
-
-    //compute yaw P control
-    float yaw_P = 2.5;
-    float yaw_diff = -1 * normalize_joystick_data(shared_memory->yaw) * MAX_YAW_RATE_DESIRED - imu_data[2];
-
-    //compute combined and check boundaries
-    float pitch_pwm = pitch_error * pitch_P  + pitch_velocity * pitch_D + pitch_eint;
-    float roll_pwm = roll_error * roll_P  + roll_velocity * roll_D + roll_eint;
-    float yaw_pwm = yaw_diff * yaw_P;
-
-    float fr = thrust + pitch_pwm + roll_pwm + yaw_pwm; 
-    float br = thrust - pitch_pwm + roll_pwm - yaw_pwm;
-    float bl = thrust - pitch_pwm - roll_pwm + yaw_pwm;
-    float fl = thrust + pitch_pwm - roll_pwm - yaw_pwm;
-
-    if (fr > PWM_MAX) fr = PWM_MAX;
-    if (fr < 1000) fr = 1000;
-    if (fl > PWM_MAX) fl = PWM_MAX;
-    if (fl < 1000) fl = 1000;
-    if (br > PWM_MAX) br = PWM_MAX;
-    if (br < 1000) br = 1000;
-    if (bl > PWM_MAX) bl = PWM_MAX;
-    if (bl < 1000) bl = 1000;
-
-    set_PWM(0, fr); 
-    set_PWM(3, fl); 
-    set_PWM(1, br); 
-    set_PWM(2, bl);
-    
-    //PWM printouts
-    printf("%10.5f\n", yaw_pwm);
-    //printf("fr: %10.5f, fl: %10.5f, br: %10.5f, bl: %10.5f\n", fr, fl, br, bl);
-
-*/
 
 }
 void pid_update() 
 {
-    float thrust = THRUST_NEUTRAL + THRUST_MAX * -1 * normalize_joystick_data(shared_memory->thrust);
+    float thrust = THRUST_NEUTRAL + (vive_thrust * 0.5) + (THRUST_MAX * -1 * normalize_joystick_data(shared_memory->thrust) * 0.5);
 
     if ( prev_error_time == 0) {
         timespec_get(&te,TIME_UTC);
@@ -593,7 +568,7 @@ void pid_update()
     float roll_P = 11; //17
     float roll_D = 1; //2
     float roll_I = 0.05; //0.05
-    float desired_roll = normalize_joystick_data(shared_memory->roll) * MAX_ROLL_DESIRED;
+    float desired_roll = (vive_roll * 0.5) + (normalize_joystick_data(shared_memory->roll) * MAX_ROLL_DESIRED * 0.5);
     float roll_error = desired_roll - roll_angle;
     float roll_velocity = (roll_prev - roll_angle) / dt;
     roll_prev = roll_angle;
@@ -601,7 +576,7 @@ void pid_update()
 
     //compute yaw P control
     float yaw_P = 2.5;
-    float yaw_diff = -1 * imu_data[2]; // -1 * normalize_joystick_data(shared_memory->yaw) * MAX_YAW_RATE_DESIRED + 
+    float yaw_diff = -imu_data[2];
 
     //compute combined and check boundaries
     float pitch_pwm = pitch_error * pitch_P  + pitch_velocity * pitch_D + pitch_eint;
