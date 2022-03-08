@@ -33,9 +33,9 @@
 #define MAX_PITCH_ANGLE 40 //was 45
 
 //motor constants 
-#define PWM_MAX 1900
-#define THRUST_NEUTRAL 1400
-#define THRUST_MAX 150 //was 200, but that makes it lift off the ground!
+#define PWM_MAX 2000
+#define THRUST_NEUTRAL 1500
+#define THRUST_MAX 200 
 #define MAX_PITCH_DESIRED 10
 #define MAX_ROLL_DESIRED 10
 #define MAX_YAW_RATE_DESIRED 125
@@ -466,34 +466,37 @@ void vive_update()
 
     //TODO: modify gamepad input to just change desire_p?? 
     //mixed autonomy doesn't make sense if the drone wants to resist change !!!!!!
+    //note: for now, the purpose of the controller IS just to introduce noise. change it later.
+
+    float P_vive_pitch = P; //0.04 
+    float D_vive_pitch = D; //0.06 
 
 
-    float P_vive_pitch = P; //0.03 (or 1)
-    float D_vive_pitch = D; //0.7 (?)
-
-
-    float P_vive_roll = 0; //setting these to 0 cancels out their implementation for now
-    float D_vive_roll = 0;
+    float P_vive_roll = P;
+    float D_vive_roll = D;
 
     float P_vive_thrust = 0;
     float D_vive_thrust = 0;
-
-    //update version
-    last_vive_version = local_p.version;
     
     //Yaw angle P controller
     float desired_yaw = 0; //or desired_p.yaw (to keep it in start position instead of zero)
     float P_vive_yaw = 400;
     vive_yaw = P_vive_yaw * (local_p.yaw - desired_yaw);
 
-    //Estimated position via exponential filter
+    //Inital position for exponential filter
+    if (vive_y_estimated == 0) {
+        vive_y_estimated = local_p.y;
+        vive_x_estimated = local_p.x;
+        vive_z_estimated = local_p.z;
+    }
     vive_y_estimated = vive_y_estimated * 0.6 + local_p.y * 0.4;
     vive_x_estimated = vive_x_estimated * 0.6 + local_p.x * 0.4; 
     vive_z_estimated = vive_z_estimated * 0.6 + local_p.z * 0.4; 
 
     //Update D only if there is new position information
+
     if ( last_vive_version == 0  || last_vive_version != local_p.version ) {
-        
+
         timespec_get(&te,TIME_UTC);
         time_curr=te.tv_nsec;
 
@@ -509,12 +512,12 @@ void vive_update()
 
         //pitch values (lock y axis)
         vive_pitch_diff = (desired_p.y - vive_y_estimated);
-        vive_pitch_velocity = (vive_y_estimated - prev_vive_y) / dt;
+        vive_pitch_velocity = (prev_vive_y - vive_y_estimated ) / dt;
         prev_vive_y = vive_y_estimated; //now set previous value for next computation
 
         //roll values (lock x axis)
-        vive_roll_diff = (desired_p.x - vive_x_estimated);
-        vive_roll_velocity = (vive_y_estimated - prev_vive_y) / dt;
+        vive_roll_diff = (vive_x_estimated - desired_p.x);
+        vive_roll_velocity = (prev_vive_x - vive_x_estimated) / dt;
         prev_vive_x = vive_x_estimated; 
 
         //thrust values (lock z axis) 
@@ -526,8 +529,23 @@ void vive_update()
         vive_pitch = P_vive_pitch * vive_pitch_diff + D_vive_pitch * (vive_pitch_velocity);
         vive_roll = P_vive_roll * vive_roll_diff + D_vive_roll * (vive_roll_velocity);  
         vive_thrust = P_vive_thrust * vive_height_diff + D_vive_thrust * (vive_height_velocity);  
-    }
+    } else {  
+        //Vive Safety Timeout
+        //get current time in nanoseconds
+        timespec_get(&te,TIME_UTC);
+        time_curr=te.tv_nsec;
 
+        //compute time since last sequence_num
+        float diff = time_curr - last_vive_time;
+        
+        //check for rollover and convert to seconds
+        if (diff <= 0) diff += 1000000000;
+        diff = diff / 1000000000;
+        if (diff > 0.5) {
+            printf("Vive Timeout - ending program\n\r");
+            run_program=0;
+        }
+    } 
     
     //printf("Desired Values= x: %10.5f, y: %10.5f, z: %10.5f, yaw: %10.5f\n\r", desired_p.x, desired_p.y, desired_p.z, desired_p.yaw);
     printf("Vive Values= x: %10.5f, y: %10.5f, z: %10.5f, yaw: %10.5f\n\r", local_p.x, local_p.y, local_p.z, local_p.yaw);
@@ -535,7 +553,7 @@ void vive_update()
 }
 void pid_update() 
 {
-    float thrust = THRUST_NEUTRAL + (vive_thrust * 0.5) + (THRUST_MAX * -1 * normalize_joystick_data(shared_memory->thrust) * 0.5);
+    float thrust = THRUST_NEUTRAL + (THRUST_MAX * -1 * normalize_joystick_data(shared_memory->thrust) * 1); // + (vive_thrust * 0.5) + 
 
     if ( prev_error_time == 0) {
         timespec_get(&te,TIME_UTC);
@@ -692,30 +710,7 @@ void safety_check()
             printf("Client/Server Timeout - ending program\n\r");
             run_program=0;
         }
-    } 
-
-    //Vive Timeout
-    if ( last_vive_version == 0  || last_vive_version != local_p.version ) {
-        timespec_get(&te,TIME_UTC);
-        last_vive_time = te.tv_nsec;
-        last_vive_version = local_p.version;
-    } else {
-        //get current time in nanoseconds
-        timespec_get(&te,TIME_UTC);
-        time_curr=te.tv_nsec;
-
-        //compute time since last sequence_num
-        float diff = time_curr - last_vive_time;
-        
-        //check for rollover and convert to seconds
-        if (diff <= 0) diff += 1000000000;
-        diff = diff / 1000000000;
-        if (diff > 0.5) {
-            printf("Vive Timeout - ending program\n\r");
-            run_program=0;
-        }
-    } 
-
+    }
 
     //Pause + Unpause
     if (shared_memory->keypress == 33) {
@@ -731,8 +726,8 @@ void safety_check()
     }
 
     //Vive Distance Shutdown
-    if (abs(local_p.x) > 1000 || abs(local_p.y) > 1000 ) {
-        printf("Vive Distance Too Far from Desired - ending program\n\r");
+    if (abs(local_p.x) > 1300 || abs(local_p.y) > 1300 ) {
+        printf("Vive Distance Out of Range - ending program\n\r");
         run_program=0;
     }
     
