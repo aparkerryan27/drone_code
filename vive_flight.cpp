@@ -14,8 +14,7 @@
 
 #include "vive.h"
 
-//gcc -o week1 week1_student.cpp -lwiringPi -lncurses -lm
-//gcc -o week1 week1_student.cpp -lwiringPi -lm
+//gcc -o vive_flight vive_flight.cpp -lwiringPi -lncurses -lm
 
 #define frequency 25000000.0
 #define CONFIG           0x1A
@@ -35,7 +34,7 @@
 //motor constants 
 #define PWM_MAX 2000
 #define THRUST_NEUTRAL 1500
-#define THRUST_MAX 200 
+#define THRUST_MAX 180
 #define MAX_PITCH_DESIRED 10
 #define MAX_ROLL_DESIRED 10
 #define MAX_YAW_RATE_DESIRED 125
@@ -75,6 +74,7 @@ float z_gyro_calibration=0;
 float roll_calibration=0;
 float pitch_calibration=0;
 float accel_z_calibration=0;
+
 float imu_data[6]; //gyro xyz, accel xyz
 long time_curr;
 long time_prev;
@@ -149,13 +149,16 @@ float prev_vive_z = 0;
 float vive_thrust = 0;
 float vive_height_diff = 0;
 float vive_height_velocity = 0;
+float vive_height_err = 0;
 
 //pid input variables
 float P = 0;
 float D = 0;
 float I = 0;
 
-
+float z_accel_change = 0;
+float z_accel_change_count = 0;
+float z_v_estimate = 0;
 
 /* ------ IMU DATA -------- */
 
@@ -179,9 +182,17 @@ void calibrate_imu()
     z_gyro_calibration = z_gyro_temp;
     roll_calibration = roll_temp;
     pitch_calibration = pitch_temp;
+    
 
     //Set Vive Position Origin
     desired_p = local_p;
+    desired_p.z = desired_p.z - 850;
+
+    //Inital position for exponential filter
+    vive_y_estimated = local_p.y;
+    vive_x_estimated = local_p.x;
+    vive_z_estimated = local_p.z;
+    
 
     //Pretty Print Calibration Values
     printf("Calibration Complete: (x_gyro, y_gyro, z_gyro, pitch, roll),  (%10.5f, %10.5f, %10.5f, %10.5f, %10.5f)\n\r",x_gyro_calibration,y_gyro_calibration,z_gyro_calibration,pitch_calibration,roll_calibration);
@@ -468,30 +479,30 @@ void vive_update()
     //mixed autonomy doesn't make sense if the drone wants to resist change !!!!!!
     //note: for now, the purpose of the controller IS just to introduce noise. change it later.
 
-    float P_vive_pitch = P; //0.04 
-    float D_vive_pitch = D; //0.06 
+    float P_vive_pitch = 0.03; //0.045 (or 1)
+    float D_vive_pitch = 0.03; //0.035 (?)
 
 
-    float P_vive_roll = P;
-    float D_vive_roll = D;
+    float P_vive_roll = 0.03; //setting these to 0 cancels out their implementation for now
+    float D_vive_roll = -0.03;
 
-    float P_vive_thrust = 0;
-    float D_vive_thrust = 0;
+    float P_vive_thrust = P; //0.07;
+    float D_vive_thrust = I; //0.2;
+    float I_vive_thrust = D; //0.003;
     
     //Yaw angle P controller
     float desired_yaw = 0; //or desired_p.yaw (to keep it in start position instead of zero)
     float P_vive_yaw = 400;
     vive_yaw = P_vive_yaw * (local_p.yaw - desired_yaw);
 
-    //Inital position for exponential filter
-    if (vive_y_estimated == 0) {
-        vive_y_estimated = local_p.y;
-        vive_x_estimated = local_p.x;
-        vive_z_estimated = local_p.z;
-    }
+    
     vive_y_estimated = vive_y_estimated * 0.6 + local_p.y * 0.4;
     vive_x_estimated = vive_x_estimated * 0.6 + local_p.x * 0.4; 
     vive_z_estimated = vive_z_estimated * 0.6 + local_p.z * 0.4; 
+
+    
+    z_accel_change += imu_data[5] + 10.1;
+    z_accel_change_count += 1;
 
     //Update D only if there is new position information
 
@@ -524,11 +535,26 @@ void vive_update()
         vive_height_diff = (desired_p.z - vive_z_estimated);
         vive_height_velocity = (vive_z_estimated - prev_vive_z) / dt;
         prev_vive_z = vive_z_estimated; 
+        vive_height_err += -vive_height_diff * I_vive_thrust;
+        if (vive_height_err < -300) {
+            vive_height_err = -300;
+        } else if (vive_height_err > 300) {
+            vive_height_err = 300;
+        } 
+    
+                    
+        float average_z_accel = (z_accel_change / z_accel_change_count);
+        z_accel_change = 0;
+        z_accel_change_count = 0;
+        float K = 50;
+        float A = 0.9;
+        z_v_estimate = (z_v_estimate + average_z_accel * K ) * A + (vive_height_velocity)*(1-A);
 
         //compute PD controller values for PWM modification
         vive_pitch = P_vive_pitch * vive_pitch_diff + D_vive_pitch * (vive_pitch_velocity);
         vive_roll = P_vive_roll * vive_roll_diff + D_vive_roll * (vive_roll_velocity);  
-        vive_thrust = P_vive_thrust * vive_height_diff + D_vive_thrust * (vive_height_velocity);  
+        vive_thrust = P_vive_thrust * -vive_height_diff + D_vive_thrust * (z_v_estimate) + vive_height_err;  
+
     } else {  
         //Vive Safety Timeout
         //get current time in nanoseconds
@@ -547,13 +573,13 @@ void vive_update()
         }
     } 
     
-    //printf("Desired Values= x: %10.5f, y: %10.5f, z: %10.5f, yaw: %10.5f\n\r", desired_p.x, desired_p.y, desired_p.z, desired_p.yaw);
-    printf("Vive Values= x: %10.5f, y: %10.5f, z: %10.5f, yaw: %10.5f\n\r", local_p.x, local_p.y, local_p.z, local_p.yaw);
+    printf("Desired Values= z: %10.5f\n\r",  desired_p.z);
+    printf("Vive Values= z: %10.5f\n\r",  local_p.z);
 
 }
 void pid_update() 
 {
-    float thrust = THRUST_NEUTRAL + (THRUST_MAX * -1 * normalize_joystick_data(shared_memory->thrust) * 1); // + (vive_thrust * 0.5) + 
+    float thrust = THRUST_NEUTRAL + vive_thrust * 0.7 + (THRUST_MAX * -1 * normalize_joystick_data(shared_memory->thrust) * 0.5); 
 
     if ( prev_error_time == 0) {
         timespec_get(&te,TIME_UTC);
@@ -581,7 +607,7 @@ void pid_update()
     float pitch_velocity = (pitch_prev - pitch_angle) / dt;
     pitch_prev = pitch_angle;
     pitch_eint += pitch_error * pitch_I;
-
+    
     //compute roll PID control
     float roll_P = 11; //17
     float roll_D = 1; //2
@@ -594,13 +620,13 @@ void pid_update()
 
     //compute yaw P control
     float yaw_P = 2.5;
-    float yaw_diff = -imu_data[2];
+    float yaw_diff = - imu_data[2];
 
     //compute combined and check boundaries
     float pitch_pwm = pitch_error * pitch_P  + pitch_velocity * pitch_D + pitch_eint;
     float roll_pwm = roll_error * roll_P  + roll_velocity * roll_D + roll_eint;
     float yaw_pwm = vive_yaw + yaw_diff * yaw_P; 
-
+    
     float fr = thrust + pitch_pwm + roll_pwm + yaw_pwm; 
     float br = thrust - pitch_pwm + roll_pwm - yaw_pwm;
     float bl = thrust - pitch_pwm - roll_pwm + yaw_pwm;
@@ -742,8 +768,8 @@ int main (int argc, char *argv[])
 {   
     P = atof(argv[1]);
     //Y_max = atoi(argv[2]);
-    D = atof(argv[2]);
-    //I = atof(argv[3]);
+    I = atof(argv[2]);
+    D = atof(argv[3]);
 
     //Safety Setup
     setup_shared_data(); //human controllers
