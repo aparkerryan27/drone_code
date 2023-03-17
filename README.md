@@ -1,4 +1,4 @@
-#Autonomous Mini Drone
+# Autonomous Mini Drone
 
 Built for a 4"x4" drone to autonomously localize and perform high precision activities under the sensory perception of a Vive Lighthouse Controller
 
