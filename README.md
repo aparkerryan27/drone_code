@@ -1,4 +1,6 @@
 # mini_drone
 
-This project is a descendant of research by German Espinosa at Northwestern (https://robotics.northwestern.edu/documents/publications/Towards_mixed_reality_system_with_quadrotor_Autonomous_drone_positioning_in_real_and_virtual_reality_space_-_Final_.pdf)
+Built for a 4"x4" drone to autonomously localize and perform high precision activities under the sensory perception of a Vive Lighthouse Controller
+
+This project was a descendant of a paper written by German Espinosa at Northwestern (shorturl.at/qFP27)
 built with assistance from Gabbie Wink during CompSci 440 @ NU
